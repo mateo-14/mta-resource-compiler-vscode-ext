@@ -17,7 +17,7 @@ export function activate(context: vscode.ExtensionContext) {
 	// The command has been defined in the package.json file
 	// Now provide the implementation of the command with registerCommand
 	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('mta-resource-compiler.compileResource', () => {
+	const disposable = vscode.commands.registerCommand('mta-resource-compiler.compileResource', async () => {
 		// The code you place here will be executed every time your command is executed
 		// Display a message box to the user
 		const activeTextEditor = vscode.window.activeTextEditor;
@@ -45,7 +45,6 @@ export function activate(context: vscode.ExtensionContext) {
 			const exists = fs.existsSync(path.join(resourceRootDir, 'meta.xml'));
 			if (!exists) {
 				outputChannel.appendLine(`Not found 'meta.xml' file in ${resourceRootDir}`);
-				outputChannel.show();
 				resourceRootDir = path.dirname(resourceRootDir);
 				continue;
 			}
@@ -86,7 +85,6 @@ export function activate(context: vscode.ExtensionContext) {
 				const resourceFolderName = path.basename(resourceRootDir);
 				if (fs.existsSync(path.join(outputPath, resourceFolderName))) {
 					outputChannel.appendLine(`Removing old compiled resource in ${resourceFolderName}`);
-					outputChannel.show();
 					fs.rmdirSync(path.join(outputPath, resourceFolderName), { recursive: true });
 				}
 
@@ -94,16 +92,16 @@ export function activate(context: vscode.ExtensionContext) {
 				fs.mkdirSync(path.join(outputPath, resourceFolderName));
 				// Copy all files to the output path
 				fs.cpSync(resourceRootDir, path.join(outputPath, resourceFolderName), {
-					recursive: true, filter(source, destination) {
+					recursive: true, filter(source) {
 						return !filesToCompile.some(file => source.includes(path.join(resourceRootDir, file)));
 					},
 				});
 
-				filesToCompile.forEach(async (file) => {
+				vscode.window.showInformationMessage(`Compiling resource ${resourceFolderName} (${resourceRootDir}).`);
+				for (const file of filesToCompile) {
 					const fileName = path.basename(file);
 
 					outputChannel.appendLine(`Compiling ${fileName}`);
-					outputChannel.show();
 					const formdata = new FormData();
 					formdata.append("compile", "1");
 					formdata.append("debug", "0");
@@ -119,21 +117,17 @@ export function activate(context: vscode.ExtensionContext) {
 					// Convert body to compiled lua
 					if (!res.ok || res.body === null) {
 						outputChannel.appendLine(`Error compiling ${fileName}`);
-						outputChannel.show();
 						return;
 					}
 
 					const compiledFile = path.join(outputPath, resourceFolderName, fileName);
 					const writer = fs.createWriteStream(compiledFile);
 					Readable.fromWeb(res.body).pipe(writer);
-				});
-
-				outputChannel.appendLine(`Compiling found scripts in ${resourceRootDir}`);
-				outputChannel.show();
-				vscode.window.showInformationMessage(`Compiling resource ${resourceRootDir}`);
+				}
+	
+				vscode.window.showInformationMessage(`Resource ${resourceFolderName} compiled successfully. (${resourceRootDir})`);
 				return;
 			}
-
 		}
 
 		vscode.window.showInformationMessage('Not found meta.xml file in parent directories.');
@@ -146,7 +140,6 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 		const currentFile = activeTextEditor.document.uri.fsPath;
-		const currentDir = path.dirname(currentFile);
 		const fileExt = path.extname(currentFile);
 		if (fileExt !== '.lua') {
 			vscode.window.showErrorMessage('Only lua files can be compiled.');
@@ -160,6 +153,7 @@ export function activate(context: vscode.ExtensionContext) {
 		const fileBuffer = fs.readFileSync(currentFile);
 		formData.append("luasource", new File([fileBuffer], path.basename(currentFile)));
 
+		vscode.window.showInformationMessage(`Compiling ${path.basename(currentFile)}`);
 		const res = await fetch("http://luac.mtasa.com/index.php", {
 			method: "POST",
 			body: formData
@@ -174,9 +168,14 @@ export function activate(context: vscode.ExtensionContext) {
 		const compiledFile = currentFile.replace('.lua', '.luac');
 		const writer = fs.createWriteStream(compiledFile);
 		Readable.fromWeb(res.body).pipe(writer);
+
+		writer.on('finish', () => {
+			vscode.window.showInformationMessage(`File compiled successfully. (${compiledFile})`);
+		});
 	});
 
 	context.subscriptions.push(disposable);
+	context.subscriptions.push(compileFileCommand);
 }
 
 // This method is called when your extension is deactivated
